@@ -1,0 +1,122 @@
+version: '3.9'
+
+services:
+  redis-db:
+    extends:
+      file: ./services/redis.yml
+      service: redis-db
+
+  db-init:
+    extends:
+      file: ./services/db.yml
+      service: db-init
+
+  db:
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/db.yml
+      service: db
+
+  backend:
+    depends_on:
+      - db
+      - redis-db
+    extends:
+      file: ./services/backend.yml
+      service: backend
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      args:
+        RELEASE_VERSION: 9.0.2
+    links:
+      - db:database
+    environment:
+        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8546/
+        CHAIN_ID: '1337'
+
+  nft_media_handler:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/nft_media_handler.yml
+      service: nft_media_handler
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      args:
+        RELEASE_VERSION: 9.0.2
+
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
+
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+
+  static-assets:
+    image: nginx:alpine
+    container_name: static-assets
+    volumes:
+      - "./proxy/static:/usr/share/nginx/html:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1/full_logo.svg || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  frontend:
+    depends_on:
+      backend:
+        condition: service_started
+      static-assets:
+        condition: service_healthy
+    extends:
+      file: ./services/frontend.yml
+      service: frontend
+
+  stats-db-init:
+    extends:
+      file: ./services/stats.yml
+      service: stats-db-init
+
+  stats-db:
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/stats.yml
+      service: stats-db
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./services/stats.yml
+      service: stats
+
+  user-ops-indexer:
+    depends_on:
+      - db
+      - backend
+    extends:
+      file: ./services/user-ops-indexer.yml
+      service: user-ops-indexer
+
+  proxy:
+    depends_on:
+      - backend
+      - frontend
+      - stats
+    extends:
+      file: ./services/nginx.yml
+      service: proxy
